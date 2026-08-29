@@ -2,45 +2,42 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
+
+type TelegramUser = { id: number; first_name?: string; last_name?: string; username?: string; language_code?: string };
+type TelegramWebApp = {
+  ready: () => void; expand: () => void; colorScheme?: 'light' | 'dark';
+  initData?: string; initDataUnsafe?: { user?: TelegramUser };
+  themeParams?: Record<string, string>;
+  onEvent?: (event: string, cb: () => void) => void; offEvent?: (event: string, cb: () => void) => void;
+};
+declare global { interface Window { Telegram?: { WebApp?: TelegramWebApp } } }
+
+function initTelegram() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return null;
+  tg.ready();
+  tg.expand();
+  document.documentElement.dataset.telegram = 'true';
+  if (tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
+  return tg;
+}
+
 type Exercise = { id: string; name: string; sets: number; weight: number; min: number; max: number };
 type Workout = { id: string; name: string; exercises: Exercise[] };
 type Program = { name: string; workouts: Workout[] };
 type SetResult = { weight: number; reps: number; rir: number; done: boolean };
 type HistoryItem = { date: string; workout: string; sets: SetResult[][] };
 
-
-type CloudState = { status: 'loading'|'ok'|'error'|'browser'; name?: string };
-const TELEGRAM_AUTH_URL = 'https://mjsrcuvzlyqtowengegi.supabase.co/functions/v1/bright-endpoint';
-
-function useTelegramAuth(): CloudState {
-  const [state, setState] = useState<CloudState>({ status: 'loading' });
-  useEffect(() => {
-    const tg = (window as any).Telegram?.WebApp;
-    if (!tg) { setState({ status: 'browser' }); return; }
-    tg.ready(); tg.expand();
-    const initData = tg.initData || '';
-    if (!initData) { setState({ status: 'browser' }); return; }
-    fetch(TELEGRAM_AUTH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData }) })
-      .then(async r => { const body = await r.json().catch(() => ({})); if (!r.ok || !body.ok) throw new Error(body.error || `HTTP ${r.status}`); return body; })
-      .then(body => setState({ status: 'ok', name: body.user?.first_name || body.user?.username || 'Telegram' }))
-      .catch(err => { console.error('Telegram auth failed', err); setState({ status: 'error' }); });
-  }, []);
-  return state;
-}
-
-function CloudStatus({state}:{state:CloudState}) {
-  if (state.status === 'ok') return <div className="cloudStatus ok"><span className="cloudDot"/>Telegram подтверждён{state.name ? ` · ${state.name}` : ''}</div>;
-  if (state.status === 'error') return <div className="cloudStatus error"><span className="cloudDot"/>Ошибка Telegram-проверки · локальный режим</div>;
-  if (state.status === 'browser') return <div className="cloudStatus"><span className="cloudDot"/>Локальный режим</div>;
-  return <div className="cloudStatus loading"><span className="cloudDot"/>Проверка Telegram…</div>;
-}
-
 const uid = () => Math.random().toString(36).slice(2, 10);
 const loadProgram = (): Program | null => { try { return JSON.parse(localStorage.getItem('program') || 'null'); } catch { return null; } };
 const saveProgram = (program: Program) => localStorage.setItem('program', JSON.stringify(program));
 
 function App() {
-  const cloud = useTelegramAuth();
+  const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
+  useEffect(() => {
+    const tg = initTelegram();
+    if (tg?.initDataUnsafe?.user) setTelegramUser(tg.initDataUnsafe.user);
+  }, []);
   const [program, setProgram] = useState<Program | null>(loadProgram);
   const [active, setActive] = useState(0);
   const [session, setSession] = useState(false);
@@ -53,7 +50,7 @@ function App() {
   if (session) return <Session workout={workout} onFinish={() => { setSession(false); setActive(v => (v + 1) % program.workouts.length); }} onCancel={() => setSession(false)} />;
 
   return <main>
-    <header className="top"><div><small>АКТИВНАЯ ПРОГРАММА</small><h1>{program.name}</h1><CloudStatus state={cloud}/></div><button className="iconButton" onClick={() => setEditing(true)}>Изменить</button></header>
+    <header className="top"><div><small>{telegramUser?.first_name ? `ПРИВЕТ, ${telegramUser.first_name.toUpperCase()}` : 'АКТИВНАЯ ПРОГРАММА'}</small><h1>{program.name}</h1></div><button className="iconButton" onClick={() => setEditing(true)}>Изменить</button></header>
     <section className="hero"><small>СЛЕДУЮЩАЯ ТРЕНИРОВКА</small><h2>{workout.name}</h2><p>{workout.exercises.length} упражнений · {workout.exercises.reduce((sum, e) => sum + e.sets, 0)} подходов</p><button onClick={() => setSession(true)}>Начать тренировку</button></section>
     <h3>Программа</h3>
     {program.workouts.map((w, i) => <section key={w.id} className={i === active ? 'activeCard' : ''}><div className="sectionTitle"><div><small>ТРЕНИРОВКА {i + 1}</small><h2>{w.name}</h2></div>{i === active && <span className="badge">Следующая</span>}</div>{w.exercises.map(e => <div className="exercise" key={e.id}><b>{e.name}</b><span>{e.sets} × {e.min}–{e.max} · {e.weight} кг</span></div>)}</section>)}
